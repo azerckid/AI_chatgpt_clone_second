@@ -12,4 +12,4 @@ def get_weather(city: str):
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(get_weather("Madrid"))
