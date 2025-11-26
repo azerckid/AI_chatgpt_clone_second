@@ -14,6 +14,7 @@ from agents import (
     FileSearchTool,
     ImageGenerationTool,
     CodeInterpreterTool,
+    HostedMCPTool,
 )
 import os
 
@@ -53,6 +54,15 @@ if "agent" not in st.session_state:
                     },
                 }
             ),
+            HostedMCPTool(
+                tool_config={
+                    "server_url": "https://mcp.context7.com/mcp",
+                    "type": "mcp",
+                    "server_label": "Context7",
+                    "server_description": "Use this to get the docs from software projects.",
+                    "require_approval": "never",
+                }
+            ),
         ],
     )
 agent = st.session_state["agent"]
@@ -60,7 +70,7 @@ agent = st.session_state["agent"]
 if "session" not in st.session_state:
     st.session_state["session"] = SQLiteSession(
         "chat-history",
-        "chat-gpt-clone-memory.db",
+        "chat-gpt-clone-memory-new.db",
     )
 session = st.session_state["session"]
 
@@ -81,7 +91,7 @@ async def paint_history():
                                 st.write(part["text"])
                 else:
                     if message["type"] == "message":
-                        st.write(message["content"][0]["text"].replace("$", "\$"))
+                        st.write(message["content"][0]["text"].replace("$", "\\$"))
         if "type" in message:
             message_type = message["type"]
             if message_type == "web_search_call":
@@ -97,6 +107,14 @@ async def paint_history():
             elif message_type == "code_interpreter_call":
                 with st.chat_message("ai"):
                     st.code(message["code"])
+            elif message_type == "mcp_list_tools":
+                with st.chat_message("ai"):
+                    st.write(f"Listed {message['server_label']}'s tools")
+            elif message_type == "mcp_call":
+                with st.chat_message("ai"):
+                    st.write(
+                        f"Called {message['server_label']}'s {message['name']} with args {message['arguments']}"
+                    )
 
 def update_status(status_container, event):
     status_messages = {
@@ -112,6 +130,12 @@ def update_status(status_container, event):
         "response.code_interpreter_call.completed": ("🤖 Ran code.", "complete"),
         "response.code_interpreter_call.in_progress": ("🤖 Running code...", "complete"),
         "response.code_interpreter_call.interpreting": ("🤖 Running code...", "complete"),
+        "response.mcp_call.completed": ("⚒️ Called MCP tool", "complete"),
+        "response.mcp_call.failed": ("⚒️ Error calling MCP tool", "complete"),
+        "response.mcp_call.in_progress": ("⚒️ Calling MCP tool...", "running"),
+        "response.mcp_list_tools.completed": ("⚒️ Listed MCP tools", "complete"),
+        "response.mcp_list_tools.failed": ("⚒️ Error listing MCP tools", "complete"),
+        "response.mcp_list_tools.in_progress": ("⚒️ Listing MCP tools", "running"),
         "response.completed": (" ", "complete"),
     }
 
@@ -133,6 +157,9 @@ async def run_agent(message):
         st.session_state["code_placeholder"] = code_placeholder
         st.session_state["image_placeholder"] = image_placeholder
         st.session_state["text_placeholder"] = text_placeholder
+        
+        mcp_tool_calls = {}
+
         stream = Runner.run_streamed(
             agent,
             message,
@@ -141,18 +168,30 @@ async def run_agent(message):
         async for event in stream.stream_events(): 
             if event.type == "raw_response_event":
                 update_status(status_container, event.data.type)
-                if event.data.type == "response.output_text.delta":
+                if event.data.type == "response.output_item.added":
+                    if event.data.item.type == "mcp_call":
+                        mcp_tool_calls[event.data.item.id] = {
+                            "name": event.data.item.name,
+                            "server_label": event.data.item.server_label,
+                            "arguments": "",
+                        }
+                elif event.data.type == "response.mcp_call_arguments.delta":
+                    if event.data.item_id in mcp_tool_calls:
+                        mcp_tool_calls[event.data.item_id]["arguments"] += event.data.delta
+                        tool_info = mcp_tool_calls[event.data.item_id]
+                        status_container.update(
+                            label=f"⚒️ Calling {tool_info['server_label']}'s {tool_info['name']} with args: {tool_info['arguments']}...",
+                            state="running",
+                        )
+                elif event.data.type == "response.output_text.delta":
                     response += event.data.delta
-                    text_placeholder.write(response.replace("$", "\$"))
+                    text_placeholder.write(response.replace("$", "\\$"))
                 elif event.data.type == "response.code_interpreter_call_code.delta":
                     code_response += event.data.delta
                     code_placeholder.code(code_response)
                 elif event.data.type == "response.image_generation_call.partial_image":
                     image = base64.b64decode(event.data.partial_image_b64)
                     image_placeholder.image(image)
-                elif event.data.type == "response.completed":
-                    image_placeholder.empty()
-                    text_placeholder.empty()
 
 prompt = st.chat_input(
     "Write a message for your assistant",
