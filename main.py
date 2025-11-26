@@ -18,21 +18,32 @@ if "session" not in st.session_state:
     )
 session = st.session_state["session"]
 
+async def paint_history():
+    messages = await session.get_items()
+    for message in messages:
+        with st.chat_message(message["role"]):
+            if message["role"] == "user":
+                st.write(message["content"])
+            else:
+                if message["type"] == "message":
+                    st.write(message["content"][0]["text"])
+
+asyncio.run(paint_history())
+
 async def run_agent(message):
-    stream = Runner.run_streamed(
-        agent,
-        message,
-        session=session,
-    )
     with st.chat_message("ai"):
-        message_placeholder = st.empty()
-        full_response = ""
+        text_placeholder = st.empty()
+        response = ""
+        stream = Runner.run_streamed(
+            agent,
+            message,
+            session=session,
+        )
         async for event in stream.stream_events():
             if event.type == "raw_response_event":
                 if event.data.type == "response.output_text.delta":
-                    full_response += event.data.delta
-                    message_placeholder.markdown(full_response + "▌")
-        message_placeholder.markdown(full_response)
+                    response += event.data.delta
+                    text_placeholder.write(response)
 
 prompt = st.chat_input("Write a message for your assistant")
 
@@ -45,4 +56,4 @@ with st.sidebar:
     reset = st.button("Reset memory")
     if reset:
         asyncio.run(session.clear_session())
-        st.write(asyncio.run(session.get_items()))
+    st.write(asyncio.run(session.get_items()))
