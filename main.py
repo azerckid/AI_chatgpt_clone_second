@@ -1,20 +1,32 @@
 import dotenv
 dotenv.load_dotenv()
 import time
+from openai import OpenAI
 import asyncio
 import streamlit as st
-from agents import Agent, Runner, SQLiteSession, WebSearchTool
+from agents import Agent, Runner, SQLiteSession, WebSearchTool, FileSearchTool
+
+client = OpenAI()
+
+# TODO: Replace this with your own Vector Store ID
+# You can create one at https://platform.openai.com/storage/vector_stores
+VECTOR_STORE_ID = "vs_68c199404f7881919db9fcdf266ba9b4"
 
 if "agent" not in st.session_state:
     st.session_state["agent"] = Agent(
         name="ChatGPT Clone",
         instructions="""
-You are a helpful assistant.
-You have access to the followign tools:
-- Web Search Tool: Use this when the user asks a questions that isn't in your training data. Use this tool when the users asks about current or future events, when you think you don't know the answer, try searching for it in the web first.
-""",
+            You are a helpful assistant.
+            You have access to the followign tools:
+            - Web Search Tool: Use this when the user asks a questions that isn't in your training data. Use this tool when the users asks about current or future events, when you think you don't know the answer, try searching for it in the web first.
+            - File Search Tool: Use this tool when the user asks a question about facts related to themselves. Or when they ask questions about specific files.
+            """,
         tools=[
             WebSearchTool(),
+            FileSearchTool(
+                vector_store_ids=[VECTOR_STORE_ID],
+                max_num_results=3,
+            ),
         ],
     )
 agent = st.session_state["agent"]
@@ -35,20 +47,30 @@ async def paint_history():
                     st.write(message["content"])
                 else:
                     if message["type"] == "message":
-                        st.write(message["content"][0]["text"])
-        if "type" in message and message["type"] == "web_search_call":
-            with st.chat_message("ai"):
-                st.write("🔍 Searched the web...")
+                        st.write(message["content"][0]["text"].replace("$", "\$"))
+        if "type" in message:
+            if message["type"] == "web_search_call":
+                with st.chat_message("ai"):
+                    st.write("🔍 Searched the web...")
+            elif message["type"] == "file_search_call":
+                with st.chat_message("ai"):
+                    st.write("🗂️ Searched your files...")
 
 def update_status(status_container, event):
     status_messages = {
         "response.web_search_call.completed": ("✅ Web search completed.", "complete"),
-        "response.web_search_call.in_progress": (
-            "🔍 Starting web search...",
+        "response.web_search_call.in_progress": ("🔍 Starting web search...", "running"),
+        "response.web_search_call.searching": ("🔍 Web search in progress...", "running"),
+        "response.file_search_call.completed": (
+            "✅ File search completed.",
+            "complete",
+        ),
+        "response.file_search_call.in_progress": (
+            "🗂️ Starting file search...",
             "running",
         ),
-        "response.web_search_call.searching": (
-            "🔍 Web search in progress...",
+        "response.file_search_call.searching": (
+            "🗂️ File search in progress...",
             "running",
         ),
         "response.completed": (" ", "complete"),
@@ -70,19 +92,39 @@ async def run_agent(message):
             message,
             session=session,
         )
-        async for event in stream.stream_events():
+        async for event in stream.stream_events(): 
             if event.type == "raw_response_event":
                 update_status(status_container, event.data.type)
                 if event.data.type == "response.output_text.delta":
                     response += event.data.delta
-                    text_placeholder.write(response)
+                    text_placeholder.write(response.replace("$", "\$"))
 
-prompt = st.chat_input("Write a message for your assistant")
+prompt = st.chat_input(
+    "Write a message for your assistant",
+    accept_file=True,
+    file_type=["txt"],
+)
 
 if prompt:
-    with st.chat_message("human"):
-        st.write(prompt)
-    asyncio.run(run_agent(prompt))
+    for file in prompt.files:
+        if file.type.startswith("text/"):
+            with st.chat_message("ai"):
+                with st.status("⏳ Uploading file...") as status:
+                    uploaded_file = client.files.create(
+                        file=(file.name, file.getvalue()),
+                        purpose="user_data",
+                    )
+                    status.update(label="⏳ Attaching file...")
+                    client.vector_stores.files.create(
+                        vector_store_id=VECTOR_STORE_ID,
+                        file_id=uploaded_file.id,
+                    )
+                    status.update(label="✅ File uploaded", state="complete")
+
+    if prompt.text:
+        with st.chat_message("human"):
+            st.write(prompt.text)
+        asyncio.run(run_agent(prompt.text))
 
 with st.sidebar:
     reset = st.button("Reset memory")
