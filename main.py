@@ -7,9 +7,7 @@ from agents import Agent, Runner, SQLiteSession
 if "agent" not in st.session_state:
     st.session_state["agent"] = Agent(
         name="ChatGPT Clone",
-        instructions="""
-You are a helpful assistant.
-""",
+        instructions=""" You are a helpful assistant.""",
     )
 agent = st.session_state["agent"]
 
@@ -20,18 +18,21 @@ if "session" not in st.session_state:
     )
 session = st.session_state["session"]
 
-
 async def run_agent(message):
     stream = Runner.run_streamed(
         agent,
         message,
         session=session,
     )
-    async for event in stream.stream_events():
-        if event.type == "raw_response_event":
-            if event.data.type == "response.output_text.delta":
-                with st.chat_message("ai"):
-                    st.write_stream(event.data.delta)
+    with st.chat_message("ai"):
+        message_placeholder = st.empty()
+        full_response = ""
+        async for event in stream.stream_events():
+            if event.type == "raw_response_event":
+                if event.data.type == "response.output_text.delta":
+                    full_response += event.data.delta
+                    message_placeholder.markdown(full_response + "▌")
+        message_placeholder.markdown(full_response)
 
 prompt = st.chat_input("Write a message for your assistant")
 
