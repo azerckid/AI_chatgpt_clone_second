@@ -3,6 +3,7 @@ You must follow these rules when generating git commit messages:
 1.  **Convention**: Follow the conventional commits specification (e.g., `type(scope): message`).
 2.  **Types**: Use English for the commit type (e.g., `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`).
 3.  **Message**: Use Korean for the commit message description.
+4.  ** 커밋메세지는 최소 3줄 이상 작성해주세요
 
 Example:
 `feat(auth): 로그인 기능 추가`
