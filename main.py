@@ -16,55 +16,59 @@ from agents import (
     CodeInterpreterTool,
     HostedMCPTool,
 )
+from agents.mcp.server import MCPServerStdio
 import os
+import sys
 
 client = OpenAI()
 
 VECTOR_STORE_ID = os.getenv("VECTOR_STORE_ID")
 
+agent = Agent(
+    name="ChatGPT Clone",
+    instructions="""
+        You are a helpful assistant.
+        You have access to the followign tools:
+        - Web Search Tool: Use this when the user asks a questions that isn't in your training data. Use this tool when the users asks about current or future events, when you think you don't know the answer, try searching for it in the web first.
+        - File Search Tool: Use this tool when the user asks a question about facts related to themselves. Or when they ask questions about specific files.
+        - Code Interpreter Tool: Use this tool when you need to write and run code to answer the user's question.
+        """,
+    tools=[
+        WebSearchTool(),
+        FileSearchTool(
+            vector_store_ids=[VECTOR_STORE_ID],
+            max_num_results=3,
+        ),
+        ImageGenerationTool(
+            tool_config={
+                "type": "image_generation",
+                "quality": "low",
+                "output_format": "jpeg",
+                "partial_images": 1,
+            }
+        ),
+        CodeInterpreterTool(
+            tool_config={
+                "type": "code_interpreter",
+                "container": {
+                    "type": "auto",
+                },
+            }
+        ),
+        HostedMCPTool(
+            tool_config={
+                "server_url": "https://mcp.context7.com/mcp",
+                "type": "mcp",
+                "server_label": "Context7",
+                "server_description": "Use this to get the docs from software projects.",
+                "require_approval": "never",
+            }
+        ),
+    ],
+)
+
 if "agent" not in st.session_state:
-    st.session_state["agent"] = Agent(
-        name="ChatGPT Clone",
-        instructions="""
-            You are a helpful assistant.
-            You have access to the followign tools:
-            - Web Search Tool: Use this when the user asks a questions that isn't in your training data. Use this tool when the users asks about current or future events, when you think you don't know the answer, try searching for it in the web first.
-            - File Search Tool: Use this tool when the user asks a question about facts related to themselves. Or when they ask questions about specific files.
-            - Code Interpreter Tool: Use this tool when you need to write and run code to answer the user's question.
-            """,
-        tools=[
-            WebSearchTool(),
-            FileSearchTool(
-                vector_store_ids=[VECTOR_STORE_ID],
-                max_num_results=3,
-            ),
-            ImageGenerationTool(
-                tool_config={
-                    "type": "image_generation",
-                    "quality": "low",
-                    "output_format": "jpeg",
-                    "partial_images": 1,
-                }
-            ),
-            CodeInterpreterTool(
-                tool_config={
-                    "type": "code_interpreter",
-                    "container": {
-                        "type": "auto",
-                    },
-                }
-            ),
-            HostedMCPTool(
-                tool_config={
-                    "server_url": "https://mcp.context7.com/mcp",
-                    "type": "mcp",
-                    "server_label": "Context7",
-                    "server_description": "Use this to get the docs from software projects.",
-                    "require_approval": "never",
-                }
-            ),
-        ],
-    )
+    st.session_state["agent"] = agent
 agent = st.session_state["agent"]
 
 if "session" not in st.session_state:
@@ -261,3 +265,7 @@ with st.sidebar:
     if reset:
         asyncio.run(session.clear_session())
     st.write(asyncio.run(session.get_items()))
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "mcp":
+        MCPServerStdio(agent).run()
